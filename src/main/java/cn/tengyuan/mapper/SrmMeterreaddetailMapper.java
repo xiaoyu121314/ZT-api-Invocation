@@ -2,6 +2,8 @@ package cn.tengyuan.mapper;
 
 import java.util.List;
 import cn.tengyuan.entity.SrmMeterreaddetail;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 /**
  * 能耗Mapper接口
@@ -9,8 +11,20 @@ import cn.tengyuan.entity.SrmMeterreaddetail;
  * @author MoShangHuaKai
  * @date 2026-06-04
  */
-public interface SrmMeterreaddetailMapper 
+@Mapper
+public interface SrmMeterreaddetailMapper
 {
+    /**
+     * 按源设备/仪表编码查询当前落库记录。
+     *
+     * <p>code 在表设计中代表唯一仪表编码。定时任务通过该字段判断应执行
+     * 首次插入还是更新最新累计读数，从而避免秒级调度产生重复数据。</p>
+     *
+     * @param code 源接口返回的仪表编码 dbh
+     * @return 已存在的仪表记录；不存在时返回 null
+     */
+    SrmMeterreaddetail selectSrmMeterreaddetailByCode(@Param("code") String code);
+
     /**
      * 查询能耗
      * 

@@ -41,6 +41,17 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where id = #{id}
     </select>
 
+    <!--
+        code 是源设备的唯一仪表编码。历史数据库如果已经存在重复 code，
+        取主键最大的最新记录，保证后续更新目标确定且不会抛出 TooManyResultsException。
+    -->
+    <select id="selectSrmMeterreaddetailByCode" parameterType="String" resultMap="SrmMeterreaddetailResult">
+        <include refid="selectSrmMeterreaddetailVo"/>
+        where code = #{code}
+        order by id desc
+        limit 1
+    </select>
+
     <insert id="insertSrmMeterreaddetail" parameterType="SrmMeterreaddetail" useGeneratedKeys="true" keyProperty="id">
         insert into srm_meterreaddetail
         <trim prefix="(" suffix=")" suffixOverrides=",">
