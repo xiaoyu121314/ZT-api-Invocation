@@ -1,32 +1,6 @@
 server:
-  port: 8089
+  port: 8099
 
 spring:
   config:
-    import: optional:file:../app.properties
-
-  datasource:
-    url: ${db.url}
-    username: ${db.username}
-    password: ${db.password}
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    hikari:
-      initialization-fail-timeout: 1
-
-    maximum-pool-size: 10
-    minimum-idle: 5
-    connection-timeout: 30000
-    idle-timeout: 600000
-    max-lifetime: 1800000
-
-  jpa:
-    show-sql: true
-    hibernate:
-    ddl-auto: update
-
-mybatis:
-  mapper-locations: classpath:mapper/*.xml
-  type-aliases-package: cn.tengyuan.entity
-  configuration:
-    map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+    import: optional:file:./app.properties

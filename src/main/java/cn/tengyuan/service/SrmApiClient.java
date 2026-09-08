@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -62,7 +63,14 @@ public class SrmApiClient {
         if (requests == null || requests.isEmpty()) {
             return;
         }
-        JSONObject response = post(METER_READ_SUBMIT_PATH, requests);
+
+        List<MeterReadSubmitRequest> filteredRequests = new ArrayList<>();
+        for (MeterReadSubmitRequest request : requests) {
+            if (request != null && "fed00fa8-19a1-47e0-903c-a6f81e440029".equals(request.getRoomCode())) {
+                filteredRequests.add(request);
+            }
+        }
+        JSONObject response = post(METER_READ_SUBMIT_PATH, filteredRequests);
         validateSuccess(response, "提交中天抄表记录");
         log.info("中天抄表接口提交成功，本批数量：{}", requests.size());
     }

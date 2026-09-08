@@ -4,8 +4,6 @@ import cn.tengyuan.config.ConfigUtil;
 import cn.tengyuan.dto.MeterReadSubmitRequest;
 import cn.tengyuan.dto.RoomLookupResult;
 import cn.tengyuan.entity.Room;
-import cn.tengyuan.entity.SrmMeterreaddetail;
-import cn.tengyuan.mapper.SrmMeterreaddetailMapper;
 import cn.tengyuan.service.SrmApiClient;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONArray;
@@ -13,24 +11,20 @@ import com.alibaba.fastjson.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.web.client.RestTemplate;
 
-import javax.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 能耗抄表数据同步任务。
@@ -68,16 +62,10 @@ public class DynamicTask implements SchedulingConfigurer {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Autowired
-    private JdbcTemplate jdbcTemplate;
-
-    @Autowired
     private RestTemplate restTemplate;
 
     @Autowired
     private SrmApiClient srmApiClient;
-
-    @Autowired
-    private SrmMeterreaddetailMapper srmMeterreaddetailMapper;
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
@@ -97,8 +85,8 @@ public class DynamicTask implements SchedulingConfigurer {
      * 只有建筑树本身无法获取或解析时才终止本轮任务。</p>
      */
     private void synchronizeMeterReads() {
-        // sync.enabled 控制采集和数据库落库，默认启用；对外接口提交由独立的
-        // srm.submit-enabled 控制，避免为了防止外发而连本地数据也无法保存。
+        // sync.enabled 控制本轮外部接口采集，默认启用；对外接口提交由独立的
+        // srm.submit-enabled 控制，便于先验证源系统数据，再决定是否向中天发送。
         if (!ConfigUtil.getBoolean("sync.enabled", true)) {
             log.info("抄表同步任务已通过 sync.enabled 配置关闭");
             return;
@@ -114,9 +102,9 @@ public class DynamicTask implements SchedulingConfigurer {
             List<Room> rooms = findRooms(root);
 
             List<MeterReadSubmitRequest> submitRequests = new ArrayList<>();
-            int persistedCount = 0;
+            int collectedCount = 0;
             for (Room room : rooms) {
-                persistedCount += collectRoomMeterReads(room, submitRequests);
+                collectedCount += collectRoomMeterReads(room, submitRequests);
             }
 
             int submittedCount = 0;
@@ -124,10 +112,10 @@ public class DynamicTask implements SchedulingConfigurer {
                 int batchSize = Math.max(1, ConfigUtil.getInt("sync.batch-size", 100));
                 submittedCount = submitInBatches(submitRequests, batchSize);
             } else {
-                log.info("抄表数据已落库；srm.submit-enabled=false，本轮不调用中天提交接口");
+                log.info("srm.submit-enabled=false，本轮只采集数据，不调用中天提交接口");
             }
-            log.info("抄表同步任务结束：匹配房间 {} 个，成功落库 {} 条，成功提交 {} 条，耗时 {} ms",
-                    rooms.size(), persistedCount, submittedCount,
+            log.info("抄表同步任务结束：匹配房间 {} 个，成功采集 {} 条，成功提交 {} 条，耗时 {} ms",
+                    rooms.size(), collectedCount, submittedCount,
                     System.currentTimeMillis() - startTime);
         } catch (Exception exception) {
             log.error("抄表同步任务执行失败，耗时 {} ms",
@@ -153,10 +141,10 @@ public class DynamicTask implements SchedulingConfigurer {
                 return 0;
             }
 
-            // 房间映射只影响中天接口字段，不应阻断源仪表数据落库。
-            // 未配置目标地址或对方接口暂时不可用时，仍保存源房号和仪表读数。
+            // 房间映射只影响中天接口提交字段，不应阻断源仪表数据采集。
+            // 未配置目标地址或对方接口暂时不可用时，仍继续读取其他设备。
             RoomLookupResult targetRoom = queryTargetRoomSafely(room);
-            int persistedCount = 0;
+            int collectedCount = 0;
             for (int i = 0; i < systems.size(); i++) {
                 JSONObject system = systems.getJSONObject(i);
                 Integer systemId = system.getInteger("sysid");
@@ -171,12 +159,12 @@ public class DynamicTask implements SchedulingConfigurer {
                 }
                 for (int j = 0; j < devices.size(); j++) {
                     JSONObject device = devices.getJSONObject(j);
-                    if (collectDeviceMeterRead(systemId, device, room, targetRoom, result)) {
-                        persistedCount++;
+                    if (collectDeviceMeterRead(systemId, device, targetRoom, result)) {
+                        collectedCount++;
                     }
                 }
             }
-            return persistedCount;
+            return collectedCount;
         } catch (Exception exception) {
             log.error("采集房间抄表数据失败，已跳过。楼宇：{}，房间：{}，源房间ID：{}",
                     room.getCommunityName(), room.getName(), room.getId(), exception);
@@ -185,20 +173,20 @@ public class DynamicTask implements SchedulingConfigurer {
     }
 
     /**
-     * 尝试查询中天房间编码，但不让目标系统故障影响本地落库。
+     * 尝试查询中天房间编码，但不让目标系统故障影响源系统数据采集。
      *
      * @return 查询成功时返回中天编码；未配置地址或查询失败时返回 null
      */
     private RoomLookupResult queryTargetRoomSafely(Room room) {
         String baseUrl = ConfigUtil.get("srm.base-url");
         if (baseUrl == null || baseUrl.trim().isEmpty()) {
-            log.debug("未配置 srm.base-url，房间 {} 本轮仅保存本地数据库", room.getName());
+            log.debug("未配置 srm.base-url，房间 {} 本轮跳过中天房间映射", room.getName());
             return null;
         }
         try {
             return srmApiClient.queryRoom(room.getCommunityName(), room.getName());
         } catch (Exception exception) {
-            log.warn("中天房间编码查询失败，本房间仍继续落库。楼宇：{}，房间：{}，原因：{}",
+            log.warn("中天房间编码查询失败，本房间仍继续采集。楼宇：{}，房间：{}，原因：{}",
                     room.getCommunityName(), room.getName(), exception.getMessage());
             return null;
         }
@@ -212,7 +200,6 @@ public class DynamicTask implements SchedulingConfigurer {
      */
     private boolean collectDeviceMeterRead(Integer systemId,
                                            JSONObject device,
-                                           Room room,
                                            RoomLookupResult targetRoom,
                                            List<MeterReadSubmitRequest> result) {
         String deviceId = device.getString("id");
@@ -251,13 +238,8 @@ public class DynamicTask implements SchedulingConfigurer {
                 return false;
             }
 
-            // 只有数据库写入成功后才加入待提交列表，保证本地库是本轮推送数据的
-            // 可追溯依据；落库异常会进入外层 catch，本条数据不会继续外发。
-            persistMeterRead(realTime, device, deviceId, room, targetRoom,
-                    meterReadType, totalActualUsage);
-
             // 只有拿到对方 RoomCode/OrgCode 的记录才具备提交条件；未映射记录
-            // 已经正常保存在数据库，后续映射恢复后会在下一轮更新并进入提交列表。
+            // 本轮只保留在内存中的采集结果，不会触发中天提交。
             if (targetRoom != null) {
                 MeterReadSubmitRequest request = new MeterReadSubmitRequest();
                 request.setRoomCode(targetRoom.getRoomCode());
@@ -273,77 +255,6 @@ public class DynamicTask implements SchedulingConfigurer {
                     deviceId, systemId, exception);
             return false;
         }
-    }
-
-    /**
-     * 将采集到的最新仪表累计读数写入 srm_meterreaddetail。
-     *
-     * <p>首次采集时创建记录，并以当前累计读数作为初始基线；后续采集按唯一仪表
-     * 编码更新同一行，上期总用量取数据库原累计读数，本期实际用量为新旧累计读数
-     * 之差。这样既能保存最新读数，也不会因当前秒级定时配置不断插入重复记录。</p>
-     */
-    private void persistMeterRead(JSONObject realTime,
-                                  JSONObject device,
-                                  String deviceId,
-                                  Room room,
-                                  RoomLookupResult targetRoom,
-                                  Integer meterReadType,
-                                  BigDecimal totalActualUsage) {
-        String meterCode = realTime.getString("dbh");
-        if (meterCode == null || meterCode.trim().isEmpty()) {
-            meterCode = device.getString("dbh");
-        }
-        if (meterCode == null || meterCode.trim().isEmpty()) {
-            // 个别设备没有表号时使用“系统类型-设备ID”作为稳定兜底编码，
-            // 仍能保证同一设备后续更新同一条数据库记录。
-            meterCode = meterReadType + "-" + deviceId;
-        }
-
-        SrmMeterreaddetail existing =
-                srmMeterreaddetailMapper.selectSrmMeterreaddetailByCode(meterCode);
-        SrmMeterreaddetail record = new SrmMeterreaddetail();
-        record.setCode(meterCode);
-        // 中天映射可用时保存其业务编码；不可用时至少保存源房号，保证采集数据
-        // 不因外部接口故障丢失。已有中天映射时继续保留原编码，防止目标接口
-        // 短暂不可用导致数据库中的 UUID 被源房号覆盖。
-        if (targetRoom != null) {
-            record.setRoomCode(targetRoom.getRoomCode());
-            record.setOrgCode(targetRoom.getOrgCode());
-        } else {
-            record.setRoomCode(existing == null || existing.getRoomCode() == null
-                    ? room.getName() : existing.getRoomCode());
-            record.setOrgCode(existing == null ? null : existing.getOrgCode());
-        }
-        record.setMeterReadType(meterReadType);
-        record.setTotalActualUsage(totalActualUsage);
-        record.setCreateDateTime(resolveReadingTime(realTime.getString("usetime")));
-
-        if (existing == null) {
-            // 第一条数据没有可比较的上期值，因此将当前读数作为基线，
-            // 本期实际用量记为 0；下一次采集即可得到准确差值。
-            record.setUpperTotalActualUsage(totalActualUsage);
-            record.setActualUsage(BigDecimal.ZERO);
-            int affectedRows = srmMeterreaddetailMapper.insertSrmMeterreaddetail(record);
-            if (affectedRows != 1) {
-                throw new IllegalStateException("新增抄表数据失败，仪表编码：" + meterCode);
-            }
-            log.info("新增抄表数据成功，仪表编码：{}，累计读数：{}", meterCode, totalActualUsage);
-            return;
-        }
-
-        BigDecimal previousTotal = existing.getTotalActualUsage();
-        if (previousTotal == null) {
-            previousTotal = totalActualUsage;
-        }
-        record.setId(existing.getId());
-        record.setUpperTotalActualUsage(previousTotal);
-        record.setActualUsage(totalActualUsage.subtract(previousTotal));
-        int affectedRows = srmMeterreaddetailMapper.updateSrmMeterreaddetail(record);
-        if (affectedRows != 1) {
-            throw new IllegalStateException("更新抄表数据失败，仪表编码：" + meterCode);
-        }
-        log.info("更新抄表数据成功，仪表编码：{}，上期读数：{}，当前读数：{}",
-                meterCode, previousTotal, totalActualUsage);
     }
 
     /**
@@ -377,24 +288,6 @@ public class DynamicTask implements SchedulingConfigurer {
         } catch (DateTimeParseException exception) {
             log.warn("设备数据时间格式异常，将使用当前日期。原始时间：{}", sourceTime);
             return LocalDate.now().toString();
-        }
-    }
-
-    /**
-     * 将源接口 yyyy-MM-dd HH:mm:ss 时间转换为数据库 Date；源时间缺失或异常时
-     * 使用服务器当前时间，确保 create_date_time 始终能够落库。
-     */
-    private Date resolveReadingTime(String sourceTime) {
-        if (sourceTime == null || sourceTime.trim().isEmpty()) {
-            return new Date();
-        }
-        try {
-            LocalDateTime localDateTime =
-                    LocalDateTime.parse(sourceTime, SOURCE_TIME_FORMATTER);
-            return Date.from(localDateTime.atZone(ZoneId.systemDefault()).toInstant());
-        } catch (DateTimeParseException exception) {
-            log.warn("设备数据时间格式异常，数据库将使用当前时间。原始时间：{}", sourceTime);
-            return new Date();
         }
     }
 
@@ -502,9 +395,4 @@ public class DynamicTask implements SchedulingConfigurer {
         return childrenValue instanceof JSONArray ? (JSONArray) childrenValue : new JSONArray();
     }
 
-    @PostConstruct
-    public void verifyDatabaseConnection() {
-        List<Map<String, Object>> databases = jdbcTemplate.queryForList("SELECT DATABASE() as db");
-        log.info("数据库连接成功，当前数据库：{}", databases.get(0).get("db"));
-    }
 }

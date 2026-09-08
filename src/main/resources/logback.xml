@@ -3,8 +3,12 @@
     <!-- 引入Spring Boot默认配置 -->
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
 
-    <!-- 日志存放路径 -->
-	<property name="log.path" value="/home/tengyuan/ZT-api-Invocation/logs" />
+    <!--
+        日志存放路径：默认使用当前 Java 进程工作目录下的 logs 文件夹，
+        避免写死 Linux 路径导致 Windows Server 启动时无法创建日志文件。
+        部署时可通过环境变量 LOG_PATH 或 JVM 参数 -DLOG_PATH=... 覆盖。
+    -->
+    <property name="log.path" value="${LOG_PATH:-./logs}" />
     <!-- 日志输出格式 -->
 	<property name="log.pattern" value="%d{HH:mm:ss.SSS} [%thread] %-5level %logger{20} - [%method,%line] - %msg%n" />
 

@@ -9,7 +9,7 @@ import java.util.Properties;
 public class ConfigUtil {
 
     private static final String CONFIG_PATH =
-            System.getProperty("config.path", "../app.properties");
+            System.getProperty("config.path", "./app.properties");
 
     public static String get(String key) {
 
