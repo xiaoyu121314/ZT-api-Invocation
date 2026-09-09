@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="CoolRequestSetting">
+    <option name="serializePaths">
+      <list>
+        <option value="C:\Users\ROG\.config\.cool-request\request\serialize\78a184f036f64605b89e0d474ee126af" />
+      </list>
+    </option>
     <option name="projectCachePath" value="project-9704d9c8-2fcd-4357-9884-1f16d211f34a" />
   </component>
 </project>

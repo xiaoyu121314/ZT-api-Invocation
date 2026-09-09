@@ -3,4 +3,4 @@ server:
 
 spring:
   config:
-    import: optional:file:./app.properties
+    import: optional:file:../app.properties
