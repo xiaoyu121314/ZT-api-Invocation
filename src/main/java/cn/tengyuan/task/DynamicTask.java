@@ -302,14 +302,14 @@ public class DynamicTask implements SchedulingConfigurer {
      */
     private String resolveReadingDate(String sourceTime) {
         if (sourceTime == null || sourceTime.trim().isEmpty()) {
-            return LocalDate.now().toString();
+            return LocalDateTime.now().toString();
         }
         try {
             return LocalDateTime.parse(sourceTime, SOURCE_TIME_FORMATTER)
                     .toLocalDate().toString();
         } catch (DateTimeParseException exception) {
             log.warn("设备数据时间格式异常，将使用当前日期。原始时间：{}", sourceTime);
-            return LocalDate.now().toString();
+            return LocalDateTime.now().toString();
         }
     }
 
