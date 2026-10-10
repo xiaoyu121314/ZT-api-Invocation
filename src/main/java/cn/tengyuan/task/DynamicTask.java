@@ -268,7 +268,8 @@ public class DynamicTask implements SchedulingConfigurer {
                 request.setOrgCode(targetRoom.getOrgCode());
                 request.setMeterReadType(meterReadType);
                 request.setTotalActualUsage(totalActualUsage);
-                request.setCreateDateTime(resolveReadingDate(realTime.getString("usetime")));
+                request.setCreateDateTime(resolveReadingDate(null));
+//                request.setCreateDateTime(resolveReadingDate(realTime.getString("usetime")));
                 result.add(request);
             }
             return true;
@@ -302,7 +303,7 @@ public class DynamicTask implements SchedulingConfigurer {
      */
     private String resolveReadingDate(String sourceTime) {
         if (sourceTime == null || sourceTime.trim().isEmpty()) {
-            return LocalDateTime.now().toString();
+            return LocalDateTime.now().toLocalDate().toString();
         }
         try {
             return LocalDateTime.parse(sourceTime, SOURCE_TIME_FORMATTER)
